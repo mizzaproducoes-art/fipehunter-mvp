@@ -4,203 +4,231 @@ import re
 import pdfplumber
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="FipeHunter - MVP", page_icon="🚗", layout="wide")
+st.set_page_config(page_title="FipeHunter - v0.3", page_icon="🚜", layout="wide")
 
 
-# --- FUNÇÕES DE EXTRAÇÃO (CÉREBRO ATUALIZADO) ---
+# --- FUNÇÕES DE LIMPEZA E EXTRAÇÃO ---
 def clean_currency(value_str):
-    """Limpa strings de moeda e converte para float."""
+    """
+    Limpa strings de moeda complexas.
+    Aceita: 'R$ 100.000', '100 000', '100.000,00'
+    """
     if not value_str:
         return 0.0
-    # Remove sujeira comum de OCR
-    clean_str = re.sub(r"[^\d,]", "", str(value_str))
-    clean_str = clean_str.replace(",", ".")
+    # Mantém apenas dígitos, pontos e vírgulas
+    clean_str = re.sub(r"[^\d,.]", "", str(value_str))
+
+    # Lógica para detectar se ponto/espaço é milhar ou decimal
+    # Se tiver vírgula, assume padrão BR (1.000,00)
+    if "," in clean_str:
+        clean_str = clean_str.replace(".", "")  # Remove milhar
+        clean_str = clean_str.replace(",", ".")  # Troca virgula por ponto decimal
+    else:
+        # Se NÃO tiver vírgula (ex: 131638 ou 131.638)
+        # Assume que ponto é milhar, pois carros custam > 500 reais
+        clean_str = clean_str.replace(".", "")
+
     try:
         return float(clean_str)
     except:
         return 0.0
 
 
-def extract_car_data(line):
+def extract_model_from_text(full_text):
+    """Remove a placa e preços do texto bruto para tentar isolar o Modelo"""
+    # Remove a placa
+    text = re.sub(r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b", "", full_text)
+    # Remove padrões de dinheiro
+    text = re.sub(r"(?:R\$|RS|R|\$)\s?[\d\.\s,]+", "", text)
+    # Limpa quebras de linha e espaços extras
+    text = text.replace("\n", " ").strip()
+
+    words = text.split()
+    # Remove palavras comuns de cabeçalho/lixo do PDF
+    stopwords = [
+        "oferta",
+        "disponivel",
+        "sp",
+        "barueri",
+        "de",
+        "para",
+        "em",
+        "loja",
+        "acordo",
+        "com",
+    ]
+    clean_words = [w for w in words if w.lower() not in stopwords and len(w) > 1]
+
+    # Retorna as primeiras 6 palavras (geralmente é Marca Modelo Versão)
+    return " ".join(clean_words[:6])
+
+
+def process_pdf_smart_mode(text):
     """
-    Tenta extrair Modelo, Ano, KM e Preços da linha.
-    Suporta o formato com aspas do PDF Alphaville.
+    MODO ASPIRADOR (STATE MACHINE):
+    Lê o texto corrido. Abre um contexto quando acha uma Placa.
+    Coleta todos os preços e textos até encontrar a próxima Placa.
     """
-    # Regex para capturar tudo que está entre aspas "..."
-    columns = re.findall(r'"([^"]*)"', line)
+    data = []
 
-    # Regex para capturar dinheiro solto na linha (fora ou dentro de aspas)
-    money_pattern = r"(?:R\$|RS|R|\$)\s?[\d\.]+,[\d]{2}"
-    prices_found = re.findall(money_pattern, line)
-    prices = [clean_currency(p) for p in prices_found]
-    # Filtra ruídos menores que R$ 500
-    prices = [p for p in prices if p > 500]
+    # Regex de Placa (Mercosul e Antiga)
+    plate_pattern = r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b"
 
-    car_info = {
-        "Placa": "Desconhecida",
-        "Modelo": "Desconhecido",
-        "Ano": "-",
-        "KM": "-",
-        "Prices": prices,
-    }
+    # Regex de Dinheiro FLEXÍVEL (Pega 'R$ 100', 'R$ 100.000', 'R$ 100 000')
+    money_pattern = r"(?:R\$|RS|R|\$)\s?[\d\.\s,]+"
 
-    # Lógica para layout Alphaville (que usa "aspas")
-    if len(columns) >= 4:
-        # Geralmente: [0]Placa, [1]Modelo, [2]Ano Fab, [3]Ano Mod, [4]KM
-        car_info["Placa"] = columns[0] if len(columns[0]) < 10 else "N/A"
-        car_info["Modelo"] = columns[1]
-        car_info["Ano"] = (
-            f"{columns[2]}/{columns[3]}" if len(columns) > 3 else columns[2]
-        )
-        car_info["KM"] = columns[4] if len(columns) > 4 else "-"
+    # Quebra em linhas para iterar
+    lines = text.split("\n")
 
-    # Lógica Fallback (Layout Desmobja/Simples sem aspas claras)
-    else:
-        # Tenta achar placa via Regex
-        plate_match = re.search(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", line)
+    current_car = None
+
+    for line in lines:
+        # Tenta achar placa na linha
+        plate_match = re.search(plate_pattern, line)
+
         if plate_match:
-            car_info["Placa"] = plate_match.group()
-            # Tenta pegar o texto após a placa como modelo
-            parts = line.split(car_info["Placa"])
-            if len(parts) > 1:
-                car_info["Modelo"] = (
-                    parts[1][:20].strip() + "..."
-                )  # Pega o começo do texto
+            # Se já tinha um carro aberto, salva ele antes de começar o novo
+            if current_car:
+                finalize_car(current_car, data)
 
-    return car_info
+            # Abre novo contexto de carro
+            current_car = {
+                "placa": plate_match.group(),
+                "full_text": line,
+                "prices_raw": [],
+                "year_model": "-",
+            }
+
+        # Se tem um carro aberto, continua aspirando dados das linhas seguintes
+        if current_car:
+            # 1. Coleta Preços na linha
+            prices = re.findall(money_pattern, line)
+            for p in prices:
+                # Filtra lixo (ex: "R$ " vazio ou muito curto)
+                if len(re.sub(r"\D", "", p)) > 2:
+                    current_car["prices_raw"].append(p)
+
+            # 2. Tenta achar Ano (ex: 2023, 2024/2025)
+            if current_car["year_model"] == "-":
+                year_match = re.search(r"\b(20[1-2][0-9])\b", line)
+                if year_match:
+                    current_car["year_model"] = year_match.group(0)
+
+            # 3. Acumula texto para extração do modelo
+            current_car["full_text"] += " " + line
+
+    # Não esquecer de salvar o último carro do arquivo
+    if current_car:
+        finalize_car(current_car, data)
+
+    return pd.DataFrame(data)
 
 
-def analyze_prices(car_info):
-    """Define quem é Fipe, Repasse e IPVA baseado no tamanho do valor"""
-    prices = sorted(car_info["Prices"], reverse=True)  # Maior para o menor
+def finalize_car(car, data_list):
+    """Processa os dados brutos acumulados de um carro"""
+    # Limpa e converte preços
+    clean_prices = []
+    for p in car["prices_raw"]:
+        val = clean_currency(p)
+        # Filtra valores irrisórios (taxas, multas pequenas)
+        if val > 3000:
+            clean_prices.append(val)
 
-    item = {
-        "Placa": car_info["Placa"],
-        "Modelo": car_info["Modelo"],
-        "Ano": car_info["Ano"],
-        "KM": car_info["KM"],
-        "Fipe": 0.0,
-        "Repasse": 0.0,
-        "Lucro_Real": 0.0,
-        "Margem_%": 0.0,
-        "Status": "Erro",
-    }
+    # Ordena preços (Maior = Fipe, Segundo Maior = Repasse)
+    clean_prices = sorted(clean_prices, reverse=True)
 
-    if len(prices) >= 2:
-        # O MAIOR valor é sempre a FIPE (quase 100% dos casos)
-        item["Fipe"] = prices[0]
+    if len(clean_prices) >= 2:
+        item = {
+            "Placa": car["placa"],
+            "Ano": car["year_model"],
+            "Modelo": extract_model_from_text(car["full_text"]),
+            "Fipe": clean_prices[0],
+            "Repasse": clean_prices[1],
+            "Lucro_Real": 0.0,
+            "IPVA_Estimado": 0.0,
+            "Status": "OK",
+        }
 
-        # O SEGUNDO maior é o Repasse (Preço que paga)
-        item["Repasse"] = prices[1]
-
-        # Se tiver um terceiro valor alto (mas menor que repasse), pode ser IPVA ou Margem bruta
-        # Vamos calcular o lucro nós mesmos para garantir
-        item["Lucro_Real"] = item["Fipe"] - item["Repasse"]
-
-        # AJUSTE FINO: Se houver IPVA explícito (Alphaville costuma ter valores menores tipo 2k-5k)
-        # Se sobrar um valor entre R$ 1.000 e R$ 15.000, abatemos do lucro
-        potential_ipva = [p for p in prices[2:] if 1000 < p < 15000]
+        # Tenta detectar IPVA (Se tiver um 3º valor entre 2k e 15k na lista)
+        potential_ipva = [x for x in clean_prices[2:] if 2000 < x < 18000]
         if potential_ipva:
-            ipva = potential_ipva[0]
-            item["Lucro_Real"] -= ipva  # Abate IPVA
+            item["IPVA_Estimado"] = potential_ipva[0]
             item["Status"] = "Com IPVA desc."
-        else:
-            item["Status"] = "Sem IPVA ident."
+
+        # Cálculo de Lucro Líquido
+        item["Lucro_Real"] = item["Fipe"] - item["Repasse"] - item["IPVA_Estimado"]
 
         if item["Fipe"] > 0:
             item["Margem_%"] = round((item["Lucro_Real"] / item["Fipe"]) * 100, 1)
 
-    return item
+            # Filtro de Sanidade:
+            # Margem > 3% (ninguém trabalha de graça)
+            # Margem < 60% (evita erros de leitura absurdos)
+            if 3 < item["Margem_%"] < 60:
+                data_list.append(item)
 
 
-def process_pdf(raw_text):
-    data = []
-    lines = raw_text.split("\n")
-    for line in lines:
-        # Só processa linhas que parecem ter dados (tem placa e dinheiro)
-        if re.search(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", line) and re.search(r"\$", line):
-            car_raw = extract_car_data(line)
-            car_final = analyze_prices(car_raw)
-            if (
-                car_final["Fipe"] > 0 and car_final["Margem_%"] < 50
-            ):  # Filtra erros absurdos (>50% costuma ser erro)
-                data.append(car_final)
-    return pd.DataFrame(data)
+# --- FRONTEND STREAMLIT ---
+st.title("🚜 FipeHunter v0.3")
+st.caption("Modo Aspirador: Lê listas quebradas, Localiza, Alphaville e Desmobja")
 
-
-# --- FRONTEND ---
-st.title("🚜 FipeHunter v0.2")
-st.caption("Versão corrigida: Modelo, Ano, KM e Lógica de Preço Inteligente")
-
-uploaded_file = st.file_uploader("Arraste o PDF", type="pdf")
+uploaded_file = st.file_uploader("Solte o PDF aqui", type="pdf")
 
 if uploaded_file:
-    with st.spinner("Analisando..."):
-        text = ""
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                t = page.extract_text()
-                if t:
-                    text += t + "\n"
+    with st.spinner("O Robô está aspirando os dados..."):
+        try:
+            all_text = ""
+            with pdfplumber.open(uploaded_file) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        all_text += t + "\n"
 
-        df = process_pdf(text)
+            # Processa com a nova lógica
+            df = process_pdf_smart_mode(all_text)
 
-        if not df.empty:
-            df = df.sort_values(by="Lucro_Real", ascending=False)
+            if not df.empty:
+                df = df.sort_values(by="Lucro_Real", ascending=False)
 
-            # --- SNIPER MODE ---
-            st.divider()
-            st.subheader("🔥 Melhores Oportunidades")
-            col1, col2, col3 = st.columns(3)
+                # --- SNIPER MODE (Top 3) ---
+                st.divider()
+                st.subheader("🔥 Top 3 Oportunidades")
 
-            top3 = df.head(3).to_dict("records")
+                cols = st.columns(3)
+                top_cars = df.head(3).to_dict("records")
 
-            if len(top3) > 0:
-                col1.metric(
-                    f"🥇 {top3[0]['Modelo']}",
-                    f"Lucro: R$ {top3[0]['Lucro_Real']:,.0f}",
-                    f"Margem: {top3[0]['Margem_%']}%",
+                for i, car in enumerate(top_cars):
+                    cols[i].metric(
+                        label=f"{car['Modelo'][:25]}...",
+                        value=f"R$ {car['Lucro_Real']:,.0f}",
+                        delta=f"{car['Margem_%']}%",
+                    )
+                    cols[i].caption(f"Placa: {car['Placa']} | Ano: {car['Ano']}")
+
+                # --- TABELA COMPLETA ---
+                st.divider()
+                st.subheader("📋 Lista Completa")
+                st.dataframe(
+                    df[
+                        [
+                            "Modelo",
+                            "Ano",
+                            "Placa",
+                            "Fipe",
+                            "Repasse",
+                            "IPVA_Estimado",
+                            "Lucro_Real",
+                            "Margem_%",
+                            "Status",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
                 )
-                col1.caption(
-                    f"{top3[0]['Ano']} | {top3[0]['KM']} km | Fipe: {top3[0]['Fipe']:,.0f}"
+            else:
+                st.warning(
+                    "Não consegui identificar carros. Verifique se o PDF contém texto selecionável (não pode ser imagem escaneada)."
                 )
 
-            if len(top3) > 1:
-                col2.metric(
-                    f"🥈 {top3[1]['Modelo']}",
-                    f"Lucro: R$ {top3[1]['Lucro_Real']:,.0f}",
-                    f"Margem: {top3[1]['Margem_%']}%",
-                )
-                col2.caption(f"{top3[1]['Ano']} | {top3[1]['KM']} km")
-
-            if len(top3) > 2:
-                col3.metric(
-                    f"🥉 {top3[2]['Modelo']}",
-                    f"Lucro: R$ {top3[2]['Lucro_Real']:,.0f}",
-                    f"Margem: {top3[2]['Margem_%']}%",
-                )
-                col3.caption(f"{top3[2]['Ano']} | {top3[2]['KM']} km")
-
-            # --- TABELA ---
-            st.divider()
-            st.dataframe(
-                df[
-                    [
-                        "Modelo",
-                        "Ano",
-                        "KM",
-                        "Placa",
-                        "Fipe",
-                        "Repasse",
-                        "Lucro_Real",
-                        "Margem_%",
-                        "Status",
-                    ]
-                ],
-                use_container_width=True,
-                hide_index=True,
-            )
-        else:
-            st.error(
-                "Nenhum carro encontrado. O PDF pode ser imagem (escaneado) ou formato desconhecido."
-            )
+        except Exception as e:
+            st.error(f"Erro ao processar: {e}")
