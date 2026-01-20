@@ -365,7 +365,7 @@ if uploaded_file:
                             "Origem",
                         ]
                     ],
-                    width="stretch",
+                    use_container_width=True,
                     hide_index=True,
                     column_config={
                         "Repasse": st.column_config.NumberColumn(
