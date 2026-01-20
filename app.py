@@ -1,5 +1,13 @@
 import streamlit as st
 import re
+import sys
+
+try:
+    import pandas as pd
+    import pdfplumber
+except Exception as e:
+    st.error(f"Erro crítico no carregamento de dependências: {e}")
+    st.stop()
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="FipeHunter Pro", layout="wide")
