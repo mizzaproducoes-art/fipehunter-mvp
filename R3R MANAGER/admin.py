@@ -199,12 +199,25 @@ def process_pdf_universal(file):
 with st.sidebar:
     st.markdown("## 🏢 R3R Admin")
     st.markdown("---")
-    st.markdown("### ⚙️ Configuração de Margem")
-    margem_tipo = st.radio("Adicionar:", ["Valor Fixo (R$)", "Porcentagem (%)"])
-    if margem_tipo == "Valor Fixo (R$)":
-        margem_valor = st.number_input("Valor Extra (R$)", value=2000.0, step=100.0)
+
+    # Controle de Visibilidade das Margens
+    exibir_margem = st.checkbox("Exibir Ajustes de Margem", value=True)
+
+    if exibir_margem:
+        st.markdown("### ⚙️ Configuração de Margem")
+        margem_tipo = st.radio("Adicionar:", ["Valor Fixo (R$)", "Porcentagem (%)"])
+        if margem_tipo == "Valor Fixo (R$)":
+            margem_valor = st.number_input("Valor Extra (R$)", value=2000.0, step=100.0)
+            margem_pct = 5.0  # Fallback
+        else:
+            margem_pct = st.number_input("Porcentagem Extra (%)", value=5.0, step=0.5)
+            margem_valor = 2000.0  # Fallback
     else:
-        margem_pct = st.number_input("Porcentagem Extra (%)", value=5.0, step=0.5)
+        # Valores padrão quando oculto
+        margem_tipo = "Valor Fixo (R$)"
+        margem_valor = 2000.0
+        margem_pct = 5.0
+
     st.markdown("---")
     st.caption("Sistema v2.1 Enterprise")
 
