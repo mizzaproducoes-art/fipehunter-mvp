@@ -1,5 +1,4 @@
 import streamlit as st
-import pandas as pd
-import pdfplumber
 
-st.write("Hello World - Libraries Loaded Successfully")
+st.set_page_config(page_title="FipeHunter Test")
+st.write("Hello World - Page Config Worked")
