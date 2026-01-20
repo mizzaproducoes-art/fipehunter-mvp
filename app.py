@@ -4,7 +4,7 @@ import re
 import pdfplumber
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="FipeHunter Pro", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="FipeHunter Pro", layout="wide")
 
 
 # --- 2. SISTEMA DE SEGURANÇA (PASSWORD GATE) ---
@@ -19,12 +19,11 @@ def check_password():
     password = st.text_input("Senha de Acesso", type="password")
 
     if st.button("Entrar"):
-        if password == "FIPE2026":  # <--- SUA SENHA MESTRA
+        if password == "FIPE2026":
             st.session_state["authenticated"] = True
             st.rerun()
         else:
             st.error("Senha incorreta.")
-            return False
     return False
 
 
