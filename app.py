@@ -1,13 +1,7 @@
 import streamlit as st
+import pandas as pd
 import re
-import sys
-
-try:
-    import pandas as pd
-    import pdfplumber
-except Exception as e:
-    st.error(f"Erro crítico no carregamento de dependências: {e}")
-    st.stop()
+import pdfplumber
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="FipeHunter Pro", layout="wide")
@@ -43,7 +37,6 @@ def parse_money(value_str):
     """Converte string para dinheiro. Exige R$ ou vírgula para não confundir com KM."""
     if not value_str:
         return None
-    import pandas as pd
 
     s = str(value_str).strip()
 
