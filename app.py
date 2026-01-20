@@ -3,34 +3,37 @@ import pandas as pd
 import re
 import pdfplumber
 
-st.set_page_config(page_title="FipeHunter v1.0", layout="wide")
-
-# --- AUTENTICACAO ---
+st.set_page_config(page_title="FipeHunter v0.9", layout="wide")
 
 
+# --- 🔒 SISTEMA DE PROTEÇÃO (PASSWORD GATE) ---
 def check_password():
-    """Retorna True se o usuário inseriu a senha correta."""
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
+    """Retorna True se o usuário digitar a senha correta."""
 
-    if st.session_state["authenticated"]:
+    # Se já estiver autenticado na sessão, libera direto
+    if st.session_state.get("authenticated", False):
         return True
 
-    st.title("Acesso Restrito - FipeHunter")
-    password = st.text_input("Digite a senha para acessar:", type="password")
+    # Layout da Tela de Bloqueio
+    st.markdown("### 🔒 Acesso Restrito - FipeHunter")
+    st.markdown("Digite a senha enviada no seu e-mail de compra.")
+
+    password = st.text_input("Senha de Acesso", type="password")
 
     if st.button("Entrar"):
-        if password == "FIPE2026":
+        if password == "FIPE2026":  # <--- SUA SENHA MESTRA AQUI
             st.session_state["authenticated"] = True
-            st.rerun()
+            st.rerun()  # Recarrega a página para liberar o app
         else:
-            st.error("Senha incorreta. Tente novamente.")
+            st.error("Senha incorreta. Verifique seu e-mail ou contate o suporte.")
+            return False
 
     return False
 
 
+# 2. Bloqueio Real
 if not check_password():
-    st.stop()
+    st.stop()  # PARA TUDO AQUI SE A SENHA NÃO FOR VÁLIDA
 
 # --- FUNCOES DE PARSING ESTRITO ---
 
