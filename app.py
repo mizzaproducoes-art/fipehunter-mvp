@@ -34,8 +34,49 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# --- 2. DADOS PRÉ-CARREGADOS (PARA OS FILTROS APARECEREM ANTES) ---
+LISTA_MARCAS = [
+    "CHEVROLET",
+    "VOLKSWAGEN",
+    "FIAT",
+    "TOYOTA",
+    "HONDA",
+    "HYUNDAI",
+    "JEEP",
+    "RENAULT",
+    "NISSAN",
+    "PEUGEOT",
+    "CITROEN",
+    "FORD",
+    "MITSUBISHI",
+    "BMW",
+    "MERCEDES-BENZ",
+    "AUDI",
+    "KIA",
+    "CAOA CHERY",
+    "RAM",
+    "BYD",
+    "GWM",
+]
+LISTA_CORES = [
+    "BRANCO",
+    "PRETO",
+    "PRATA",
+    "CINZA",
+    "VERMELHO",
+    "AZUL",
+    "BEGE",
+    "AMARELO",
+    "VERDE",
+    "MARROM",
+    "DOURADO",
+    "LARANJA",
+    "VINHO",
+]
+LISTA_ANOS = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017]
 
-# --- 2. SISTEMA DE SEGURANÇA ---
+
+# --- 3. SISTEMA DE SEGURANÇA ---
 def check_password():
     if st.session_state.get("authenticated", False):
         return True
@@ -57,27 +98,7 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- 3. MOTORES DE EXTRAÇÃO (CÉREBRO) ---
-
-CORES_VALIDAS = [
-    "BRANCO",
-    "BRANCA",
-    "PRETO",
-    "PRETA",
-    "PRATA",
-    "CINZA",
-    "VERMELHO",
-    "VERMELHA",
-    "AZUL",
-    "BEGE",
-    "AMARELO",
-    "AMARELA",
-    "VERDE",
-    "MARROM",
-    "DOURADO",
-    "LARANJA",
-    "VINHO",
-]
+# --- 4. MOTORES DE EXTRAÇÃO ---
 
 
 def parse_money(value_str):
@@ -115,39 +136,26 @@ def parse_km(value_str):
 
 
 def extract_years(text):
-    """Extrai anos nos formatos 2022, 2023 ou 22/23"""
-    # Tenta formato curto 22/23
     short_years = re.search(r"\b(\d{2})/(\d{2})\b", text)
     if short_years:
         y1 = int(short_years.group(1)) + 2000
         y2 = int(short_years.group(2)) + 2000
         return y1, y2
-
-    # Tenta formato longo 2022
     years = re.findall(r"\b(20[1-2][0-9])\b", text)
     unique_years = sorted(list(set([int(y) for y in years])))
-
     if len(unique_years) >= 2:
-        return unique_years[0], unique_years[1]  # Fab, Mod
+        return unique_years[0], unique_years[1]
     elif len(unique_years) == 1:
         return unique_years[0], unique_years[0]
-
-    return 0, 0  # Não encontrou
+    return 0, 0
 
 
 def extract_color(text):
     text_upper = text.upper()
-    for cor in CORES_VALIDAS:
+    for cor in LISTA_CORES:
         if cor in text_upper:
-            # Normaliza (BRANCA -> BRANCO)
             if cor == "BRANCA":
-                return "BRANCO"
-            if cor == "PRETA":
-                return "PRETO"
-            if cor == "VERMELHA":
-                return "VERMELHO"
-            if cor == "AMARELA":
-                return "AMARELO"
+                return "BRANCO"  # Normalização simples
             return cor
     return "OUTROS"
 
@@ -156,7 +164,7 @@ def clean_model_and_brand(text):
     text = str(text).replace("\n", " ").replace('"', "").replace("'", "")
     text = re.sub(r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b", "", text)
     text = re.sub(r"R\$\s?[\d\.,]+", "", text)
-    text = re.sub(r"\b20[1-2][0-9]\b", "", text)  # Remove anos do nome
+    text = re.sub(r"\b20[1-2][0-9]\b", "", text)
 
     stopwords = [
         "oferta",
@@ -178,7 +186,7 @@ def clean_model_and_brand(text):
         "automatico",
         "automático",
         "aut",
-    ] + CORES_VALIDAS
+    ] + LISTA_CORES
     words = text.split()
     clean_words = [
         w
@@ -187,48 +195,28 @@ def clean_model_and_brand(text):
         and len(w) > 2
         and not w.isdigit()
     ]
-
     full_name = " ".join(clean_words[:6])
 
-    # Extração de Marca
-    marca = "OUTROS"
+    # Extração de Marca Baseada na Lista Pré-definida
+    marca_encontrada = "OUTROS"
     if clean_words:
         first = clean_words[0].upper()
-        if first in ["VW", "VOLKS", "VOLKSWAGEN"]:
-            marca = "VOLKSWAGEN"
-        elif first in ["GM", "CHEVROLET", "CHEV"]:
-            marca = "CHEVROLET"
-        elif first in ["FIAT"]:
-            marca = "FIAT"
-        elif first in ["TOYOTA"]:
-            marca = "TOYOTA"
-        elif first in ["HONDA"]:
-            marca = "HONDA"
-        elif first in ["HYUNDAI"]:
-            marca = "HYUNDAI"
-        elif first in ["JEEP"]:
-            marca = "JEEP"
-        elif first in ["RENAULT"]:
-            marca = "RENAULT"
-        elif first in ["NISSAN"]:
-            marca = "NISSAN"
-        elif first in ["PEUGEOT"]:
-            marca = "PEUGEOT"
-        elif first in ["CITROEN"]:
-            marca = "CITROEN"
-        elif first in ["FORD"]:
-            marca = "FORD"
-        elif first in ["BMW"]:
-            marca = "BMW"
-        elif first in ["MITSUBISHI"]:
-            marca = "MITSUBISHI"
+        # Normalizações comuns
+        if first in ["VW", "VOLKS"]:
+            first = "VOLKSWAGEN"
+        if first in ["GM", "CHEV"]:
+            first = "CHEVROLET"
+
+        if first in LISTA_MARCAS:
+            marca_encontrada = first
         else:
-            marca = first
+            # Tenta achar a marca no meio do nome se não for a primeira palavra
+            for m in LISTA_MARCAS:
+                if m in full_name.upper():
+                    marca_encontrada = m
+                    break
 
-    return full_name, marca
-
-
-# --- 4. DRIVERS DE LEITURA ---
+    return full_name, marca_encontrada
 
 
 def process_pdf_universal(file):
@@ -264,14 +252,11 @@ def process_pdf_universal(file):
                                     k = parse_km(c_str)
                                     if k > km:
                                         km = k
-
                             prices = sorted(list(set(prices)), reverse=True)
-
                             if len(prices) >= 2:
                                 modelo, marca = clean_model_and_brand(row_str)
                                 ano_fab, ano_mod = extract_years(row_str)
                                 cor = extract_color(row_str)
-
                                 data_found.append(
                                     {
                                         "Marca": marca,
@@ -288,20 +273,18 @@ def process_pdf_universal(file):
         except Exception:
             pass
 
-        # ESTRATÉGIA B: Texto (Fallback)
+        # ESTRATÉGIA B: Texto
         if len(data_found) < 3:
             parts = re.split(r"(\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b)", full_text)
             temp_data = []
             for i in range(1, len(parts) - 1, 2):
                 placa = parts[i]
                 content = parts[i + 1]
-
                 prices_raw = re.findall(r"R\$\s?[\d\.,]+", content)
                 prices = sorted(
                     [p for p in [parse_money(pr) for pr in prices_raw] if p],
                     reverse=True,
                 )
-
                 km = 0
                 km_match = re.search(r"(?:KM|Km)\s?([\d\.]+)", content)
                 if km_match:
@@ -310,12 +293,10 @@ def process_pdf_universal(file):
                     loose = re.search(r"\b(\d{4,6})\b", content)
                     if loose and 0 < int(loose.group(1)) < 300000:
                         km = int(loose.group(1))
-
                 if len(prices) >= 2:
                     modelo, marca = clean_model_and_brand(content)
                     ano_fab, ano_mod = extract_years(content)
                     cor = extract_color(content)
-
                     temp_data.append(
                         {
                             "Marca": marca,
@@ -334,81 +315,84 @@ def process_pdf_universal(file):
     return data_found
 
 
-# --- 5. FRONTEND (BARRA LATERAL COM FILTROS) ---
+# --- 5. SIDEBAR COM FILTROS FIXOS (A MÁGICA) ---
 
-st.sidebar.header("🔍 Filtros Gerais")
+st.sidebar.header("🔍 Filtros Pré-Upload")
+st.sidebar.caption("Configure antes ou depois de carregar.")
+
+# 1. Filtros Financeiros
 max_invest = st.sidebar.number_input(
     "💰 Investimento Máximo (R$):", min_value=0.0, value=0.0, step=5000.0
 )
 target_km = st.sidebar.slider("🚗 KM Máxima:", 0, 200000, 150000, step=5000)
 min_margin = st.sidebar.slider("📈 Margem Mínima (%):", 0, 50, 10)
 
+st.sidebar.divider()
+st.sidebar.header("🚙 Filtros de Veículo")
+
+# 2. Filtros de Atributos (AGORA FIXOS)
+# Deixamos vazio [] como padrão para "TODOS"
+sel_marcas = st.sidebar.multiselect("Montadora:", LISTA_MARCAS)
+sel_anos = st.sidebar.multiselect("Ano Modelo:", LISTA_ANOS)
+sel_cores = st.sidebar.multiselect("Cor:", LISTA_CORES)
+
+# 3. Filtro de Modelo (Texto Livre - Funciona antes do Upload)
+txt_modelo = st.sidebar.text_input("Buscar Modelo (ex: Corolla):", "")
+
+# --- 6. ÁREA PRINCIPAL ---
+
 st.title("🎯 FipeHunter Pro")
 st.markdown("### Inteligência Artificial para Repasses")
 
-uploaded_file = st.file_uploader("Arraste seu PDF (Qualquer formato)", type="pdf")
+if sel_marcas or txt_modelo:
+    st.info(
+        f"🎯 Filtro Ativo: Buscando {sel_marcas if sel_marcas else ''} {txt_modelo}"
+    )
+
+uploaded_file = st.file_uploader("Arraste seu PDF aqui para processar", type="pdf")
 
 if uploaded_file:
-    with st.spinner("Lendo e classificando frota..."):
+    with st.spinner("Aplicando seus filtros..."):
         try:
             raw_data = process_pdf_universal(uploaded_file)
             df = pd.DataFrame(raw_data)
 
             if not df.empty:
-                # --- CRIAÇÃO DOS FILTROS ESPECÍFICOS (MARCA, ANO, COR) ---
-                st.sidebar.divider()
-                st.sidebar.header("🚙 Filtros de Veículo")
-
-                # 1. Filtro de Marca
-                todas_marcas = sorted(df["Marca"].unique())
-                marcas_sel = st.sidebar.multiselect(
-                    "Marca:", todas_marcas, default=todas_marcas
-                )
-
-                # 2. Filtro de Modelo (Dinâmico baseado na Marca)
-                df_filtrado_marca = df[df["Marca"].isin(marcas_sel)]
-                todos_modelos = sorted(df_filtrado_marca["Modelo"].unique())
-                modelos_sel = st.sidebar.multiselect(
-                    "Modelo:", todos_modelos, default=todos_modelos
-                )
-
-                # 3. Filtro de Ano Modelo
-                todos_anos = sorted([x for x in df["Ano_Mod"].unique() if x > 0])
-                if todos_anos:
-                    anos_sel = st.sidebar.multiselect(
-                        "Ano Modelo:", todos_anos, default=todos_anos
-                    )
-                else:
-                    anos_sel = []
-
-                # 4. Filtro de Cor
-                todas_cores = sorted(df["Cor"].unique())
-                cores_sel = st.sidebar.multiselect(
-                    "Cor:", todas_cores, default=todas_cores
-                )
-
-                # --- APLICAÇÃO DOS FILTROS ---
                 final_data = []
 
-                # Filtrar o DataFrame principal com base nas seleções da Sidebar
-                mask_marca = df["Marca"].isin(marcas_sel)
-                mask_modelo = df["Modelo"].isin(modelos_sel)
-                mask_ano = (
-                    df["Ano_Mod"].isin(anos_sel)
-                    if anos_sel
-                    else pd.Series([True] * len(df), index=df.index)
-                )
-                mask_cor = df["Cor"].isin(cores_sel)
-
-                df_filtered = df[mask_marca & mask_modelo & mask_ano & mask_cor]
-
-                for index, item in df_filtered.iterrows():
+                for index, item in df.iterrows():
                     lucro = item["Fipe"] - item["Repasse"]
 
                     if item["Fipe"] > 0:
                         margem = (lucro / item["Fipe"]) * 100
 
-                        # Filtros Numéricos (Investimento, KM, Margem)
+                        # --- VERIFICAÇÃO DE FILTROS ---
+
+                        # 1. Marca (Se lista vazia, passa tudo. Se não, checa)
+                        pass_marca = True
+                        if sel_marcas:
+                            if item["Marca"] not in sel_marcas:
+                                pass_marca = False
+
+                        # 2. Ano (Se lista vazia, passa tudo)
+                        pass_ano = True
+                        if sel_anos:
+                            if item["Ano_Mod"] not in sel_anos:
+                                pass_ano = False
+
+                        # 3. Cor
+                        pass_cor = True
+                        if sel_cores:
+                            if item["Cor"] not in sel_cores:
+                                pass_cor = False
+
+                        # 4. Modelo (Busca Texto Parcial)
+                        pass_modelo = True
+                        if txt_modelo:
+                            if txt_modelo.upper() not in item["Modelo"].upper():
+                                pass_modelo = False
+
+                        # 5. Financeiros
                         pass_invest = (
                             True if max_invest == 0 else (item["Repasse"] <= max_invest)
                         )
@@ -416,7 +400,11 @@ if uploaded_file:
                         pass_margin = True if margem >= min_margin else False
 
                         if (
-                            pass_invest
+                            pass_marca
+                            and pass_ano
+                            and pass_cor
+                            and pass_modelo
+                            and pass_invest
                             and pass_km
                             and pass_margin
                             and (1 < margem < 70)
@@ -431,7 +419,7 @@ if uploaded_file:
                 if not df_final.empty:
                     df_final = df_final.sort_values(by="Lucro_Real", ascending=False)
 
-                    st.success(f"Encontramos {len(df_final)} veículos no seu filtro!")
+                    st.success(f"Encontramos {len(df_final)} veículos!")
 
                     # --- TOP 3 CARDS ---
                     st.divider()
@@ -510,13 +498,16 @@ if uploaded_file:
                     )
                 else:
                     st.warning(
-                        "Nenhum carro passou nos seus filtros. Tente liberar mais Marcas, Cores ou aumentar o limite de preço."
+                        "Nenhum resultado com esses filtros. Tente limpar os filtros na lateral."
                     )
             else:
-                st.warning(
-                    "O arquivo foi lido, mas não encontramos carros válidos. Verifique se é um PDF de repasse."
-                )
+                st.warning("O arquivo não contém veículos reconhecíveis.")
 
         except Exception as e:
-            st.error("Erro ao processar arquivo.")
+            st.error("Erro ao processar.")
             st.code(e)
+else:
+    # Mensagem de Boas Vindas quando não tem arquivo
+    st.info(
+        "👈 Configure seus filtros na barra lateral (Marca, Ano, Cor) e arraste o PDF para ver a mágica."
+    )
