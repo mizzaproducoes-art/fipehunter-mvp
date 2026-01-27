@@ -89,14 +89,25 @@ def extract_cars_from_row(row):
     precos_txt = str(row[9]).split("\n") if len(row) > 9 and row[9] else []
     laudo_txt = str(row[15]).strip().upper() if len(row) > 15 and row[15] else ""
 
-    placas = re.findall(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", str(row[0])) if row[0] else []
+    # Extrai placas - tenta regex primeiro, depois usa texto direto
+    placas_raw = str(row[0]).upper().replace("\n", " ").strip() if row[0] else ""
+    placas = re.findall(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", placas_raw)
+
+    # Se não encontrou pelo regex mas tem texto, usa o texto limpo como placa
+    if not placas and placas_raw and len(placas_raw) >= 7:
+        placas_split = placas_raw.split()
+        placas = [p for p in placas_split if len(p) >= 7][: len(modelos) or 1]
+
     num_cars = max(len(modelos), 1)
 
     for i in range(num_cars):
         car = {}
 
-        # Placa
-        car["Placa"] = placas[i] if i < len(placas) else f"SEM-{i + 1}"
+        # Placa - usa a encontrada ou gera placeholder
+        if i < len(placas):
+            car["Placa"] = placas[i][:7].upper()
+        else:
+            car["Placa"] = f"SEM-{i + 1}"
 
         # Modelo
         raw_model = modelos[i] if i < len(modelos) else (modelos[-1] if modelos else "")
