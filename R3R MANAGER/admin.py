@@ -21,9 +21,11 @@ st.markdown(
 
 
 def parse_money(value_str):
+    """Converte valores monetários para float, tratando formatos como 'R$ 6 2.095,00'"""
     if not value_str:
         return None
-    clean = re.sub(r"[^\d,]", "", str(value_str))
+    # Remove tudo exceto dígitos e vírgula, incluindo espaços
+    clean = re.sub(r"[^\d,]", "", str(value_str).replace(" ", ""))
     if not clean:
         return None
     try:
@@ -33,7 +35,7 @@ def parse_money(value_str):
             else float(clean.replace(".", ""))
         )
         return val if val > 2000 else None  # Filtra valores de margem pequenos
-    except:
+    except Exception:
         return None
 
 
@@ -62,125 +64,83 @@ def clean_model(text):
 
 def extract_cars_from_row(row):
     """
-    Função Mágica: Recebe uma linha crua da tabela (que pode ter 3 carros grudados)
-    e devolve uma lista de dicionários separados.
+    Extrai carros da linha usando layout de 16 colunas:
+    0: Placa (pode estar vazio), 1: LOJA, 2: MODELO, 3: ANO FAB, 4: ANO MOD,
+    5: KM, 6: COR, 7: FIPE, 8: MARGEM, 9: PREÇO CLIENTE (Custo),
+    10: Orçamento (alternativo)
     """
     extracted = []
 
-    # 1. Identificar Placas (Âncora) - Coluna 0
-    raw_placas = str(row[0])
-    placas = re.findall(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", raw_placas)
-
-    if not placas:
+    # Verifica se tem colunas suficientes
+    if len(row) < 10:
         return []
 
-    # 2. Preparar outras colunas para divisão
-    # Se temos 2 placas, esperamos que as outras colunas tenham dados para 2 carros
-    # Dividimos por quebra de linha '\n' que é o padrão do PDFplumber para células mescladas
+    # Verifica se tem modelo (coluna essencial)
+    if not row[2] or "MODELO" in str(row[2]).upper():
+        return []  # Pula cabeçalho ou linha vazia
 
-    models = str(row[1]).split("\n") if len(row) > 1 else []
-    anos_fab = str(row[2]).split("\n") if len(row) > 2 else []
-    anos_mod = str(row[3]).split("\n") if len(row) > 3 else []
-    kms = str(row[4]).split("\n") if len(row) > 4 else []
+    # Dados da linha (podem ter múltiplos carros separados por \n)
+    modelos = str(row[2]).split("\n") if row[2] else []
+    anos_fab = str(row[3]).split("\n") if row[3] else []
+    anos_mod = str(row[4]).split("\n") if row[4] else []
+    kms = str(row[5]).split("\n") if row[5] else []
+    cores = str(row[6]).split("\n") if row[6] else []
+    fipes_txt = str(row[7]).split("\n") if row[7] else []
+    # Usa PREÇO CLIENTE (col 9) como custo - é onde está o valor neste PDF
+    precos_txt = str(row[9]).split("\n") if row[9] else []
 
-    # Coluna 5 (Preços/Cores) é a mais bagunçada.
-    # Tática: Dividir pelo número de placas.
-    raw_prices = str(row[5])
-    # Tenta dividir por duplo enter (padrão visual) ou apenas enter
-    price_chunks = re.split(r"\n+", raw_prices)
-    # Remove chunks vazios ou que só tem "RS"
-    price_chunks = [p for p in price_chunks if len(p.strip()) > 2]
+    # Placas são opcionais
+    placas = re.findall(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", str(row[0])) if row[0] else []
 
-    # Sincronização
-    num_cars = len(placas)
+    # Número de carros = máximo entre modelos encontrados ou 1
+    num_cars = max(len(modelos), 1)
 
     for i in range(num_cars):
         car = {}
-        car["Placa"] = placas[i]
 
-        # Tenta pegar o Modelo correspondente (ou repete o último)
-        try:
-            raw_model = models[i] if i < len(models) else models[-1]
-        except:
-            raw_model = "Modelo Desconhecido"
+        # Placa (opcional)
+        if i < len(placas):
+            car["Placa"] = placas[i]
+        else:
+            car["Placa"] = f"SEM-{i + 1}"
+
+        # Modelo
+        raw_model = modelos[i] if i < len(modelos) else (modelos[-1] if modelos else "")
         car["Modelo"] = clean_model(raw_model)
 
-        # Tenta pegar Ano
-        try:
-            fab = anos_fab[i] if i < len(anos_fab) else ""
-        except:
-            fab = ""
-        try:
-            mod = anos_mod[i] if i < len(anos_mod) else ""
-        except:
-            mod = ""
-        car["Ano"] = f"{fab}/{mod}"
+        # Ano
+        fab = anos_fab[i] if i < len(anos_fab) else (anos_fab[-1] if anos_fab else "")
+        mod = anos_mod[i] if i < len(anos_mod) else (anos_mod[-1] if anos_mod else "")
+        car["Ano"] = f"{fab}/{mod}".strip("/")
 
-        # Tenta pegar KM
+        # KM
         try:
             k_txt = kms[i] if i < len(kms) else "0"
             car["KM"] = int(re.sub(r"[^\d]", "", k_txt))
-        except:
+        except Exception:
             car["KM"] = 0
 
-        # Tenta pegar Preços no Chunk correspondente
-        # Se temos 2 carros e 4 chunks de preço, assumimos 2 chunks por carro?
-        # Simplificação: Pega todo o texto da coluna 5 e busca preços.
-        # SEPARAMOS o texto da coluna 5 em N partes iguais para tentar isolar o preço de cada carro
+        # Cor
+        cor_txt = cores[i] if i < len(cores) else (cores[-1] if cores else "OUTROS")
+        car["Cor"] = cor_txt.split()[0] if cor_txt else "OUTROS"
 
-        full_price_text = raw_prices.replace("\n", " ")
-        # Busca TODOS os preços da célula
-        all_money = re.findall(r"R\$\s?[\d\.,]+", full_price_text)
-        all_vals = sorted(
-            [parse_money(m) for m in all_money if parse_money(m)], reverse=True
+        # FIPE
+        fipe_raw = (
+            fipes_txt[i] if i < len(fipes_txt) else (fipes_txt[-1] if fipes_txt else "")
         )
+        fipe_val = parse_money(fipe_raw)
 
-        # Lógica de Distribuição:
-        # Se tem 2 carros, os 2 maiores valores são Fipes? Ou Fipe1, Repasse1, Fipe2, Repasse2?
-        # A planilha mistura tudo.
-        # Melhor estratégia: Tentar isolar o texto do chunk.
-
-        current_chunk = ""
-        if i < len(price_chunks):
-            current_chunk = price_chunks[i]
-        else:
-            current_chunk = raw_prices  # Fallback
-
-        # Extrai cor do chunk
-        car["Cor"] = "OUTROS"
-        for c in ["BRANCO", "PRETO", "PRATA", "CINZA", "VERMELHO"]:
-            if c in current_chunk.upper():
-                car["Cor"] = c
-                break
-
-        # Extrai valores DO CHUNK ESPECÍFICO (Mais seguro)
-        chunk_vals = sorted(
-            [
-                parse_money(m)
-                for m in re.findall(r"R\$\s?[\d\.,]+", current_chunk)
-                if parse_money(m)
-            ],
-            reverse=True,
+        # Custo Original - usa PREÇO CLIENTE (coluna 9)
+        preco_raw = (
+            precos_txt[i]
+            if i < len(precos_txt)
+            else (precos_txt[-1] if precos_txt else "")
         )
+        preco_val = parse_money(preco_raw)
 
-        if len(chunk_vals) >= 2:
-            car["Fipe"] = chunk_vals[0]
-            car["Custo_Original"] = chunk_vals[
-                1
-            ]  # Segundo maior valor do bloco é o custo
-        elif len(all_vals) >= 2 * num_cars:
-            # Fallback: Se não achou no chunk, tenta pegar da lista global de preços da célula
-            # Ex: Carro 0 pega indices 0 e 1. Carro 1 pega indices 2 e 3.
-            idx_start = i * 2
-            if idx_start + 1 < len(all_vals):
-                car["Fipe"] = all_vals[idx_start]
-                car["Custo_Original"] = all_vals[idx_start + 1]
-            else:
-                continue  # Pula se não tiver preço
-        else:
-            continue  # Sem preço, sem carro
-
-        if car.get("Custo_Original", 0) > 5000:
+        if fipe_val and preco_val and preco_val > 5000:
+            car["Fipe"] = fipe_val
+            car["Custo_Original"] = preco_val
             extracted.append(car)
 
     return extracted

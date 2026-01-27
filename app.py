@@ -56,66 +56,100 @@ if not check_password():
 
 # --- PARSER INTELIGENTE (MESMA LÓGICA DO B2B) ---
 def parse_money(v):
+    """Converte valores monetários para float, tratando formatos como 'R$ 6 2.095,00'"""
     try:
-        c = re.sub(r"[^\d,]", "", str(v))
+        # Remove tudo exceto dígitos e vírgula, incluindo espaços
+        c = re.sub(r"[^\d,]", "", str(v).replace(" ", ""))
+        if not c:
+            return None
         return (
             float(c.replace(".", "").replace(",", "."))
             if "," in c
             else float(c.replace(".", ""))
         )
-    except:
+    except Exception:
         return None
 
 
 def extract_cars(row):
+    """
+    Extrai carros da linha usando layout de 16 colunas:
+    0: Placa (pode estar vazio), 1: LOJA, 2: MODELO, 3: ANO FAB, 4: ANO MOD,
+    5: KM, 6: COR, 7: FIPE, 8: MARGEM, 9: PREÇO CLIENTE (Repasse),
+    10: Orçamento (alternativo)
+    """
     cars = []
-    placas = re.findall(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", str(row[0]))
-    if not placas:
+
+    # Verifica se tem colunas suficientes
+    if len(row) < 10:
         return []
 
-    # Textos Base
-    txt_mod = str(row[1]).split("\n") if len(row) > 1 else []
-    txt_prc = str(row[5])  # Coluna Preço
+    # Verifica se tem modelo (coluna essencial)
+    if not row[2] or "MODELO" in str(row[2]).upper():
+        return []  # Pula cabeçalho ou linha vazia
 
-    # Quebra de Preços/Chunk
-    # Tenta quebrar por linha, mas limpa linhas vazias
-    chunks = [x for x in re.split(r"\n+", txt_prc) if len(x) > 3]
+    # Dados da linha (podem ter múltiplos carros separados por \n)
+    modelos = str(row[2]).split("\n") if row[2] else []
+    fipes_txt = str(row[7]).split("\n") if row[7] else []
+    # Usa PREÇO CLIENTE (col 9) como Repasse - é onde está o valor de custo neste PDF
+    precos_txt = str(row[9]).split("\n") if row[9] else []
 
-    for i, placa in enumerate(placas):
-        car = {"Placa": placa}
+    # Placas são opcionais
+    placas = re.findall(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", str(row[0])) if row[0] else []
+
+    # Número de carros = máximo entre modelos encontrados ou 1
+    num_cars = max(len(modelos), 1)
+
+    for i in range(num_cars):
+        car = {}
+
+        # Placa (opcional)
+        if i < len(placas):
+            car["Placa"] = placas[i]
+        else:
+            car["Placa"] = f"SEM-{i + 1}"
 
         # Modelo
-        raw_m = txt_mod[i] if i < len(txt_mod) else (txt_mod[-1] if txt_mod else "")
+        raw_m = modelos[i] if i < len(modelos) else (modelos[-1] if modelos else "")
         # Limpa Modelo
-        ignore = ["VCPBR", "FLEX", "AUTOMATICO", "MANUAL"] + MARCAS
+        ignore = [
+            "VCPBR",
+            "VCPER",
+            "FLEX",
+            "AUTOMATICO",
+            "MANUAL",
+            "C/AR",
+            "4P",
+            "2P",
+        ] + MARCAS
         m_words = [w for w in raw_m.split() if w.upper() not in ignore and len(w) > 2]
         car["Modelo"] = " ".join(m_words[:5])
 
-        # Marca
+        # Marca - detecta no texto bruto do modelo
         car["Marca"] = "OUTROS"
         for m in MARCAS:
-            if m in car["Modelo"].upper():
+            if m in raw_m.upper():
                 car["Marca"] = m
                 break
 
-        # Tenta achar preços no chunk
-        # Se tiver menos chunks que carros, usa o texto todo
-        search_text = chunks[i] if i < len(chunks) else txt_prc
-
-        vals = sorted(
-            [
-                parse_money(m)
-                for m in re.findall(r"R\$\s?[\d\.,]+", search_text)
-                if parse_money(m)
-            ],
-            reverse=True,
+        # FIPE
+        fipe_raw = (
+            fipes_txt[i] if i < len(fipes_txt) else (fipes_txt[-1] if fipes_txt else "")
         )
+        fipe_val = parse_money(fipe_raw)
 
-        if len(vals) >= 2:
-            car["Fipe"] = vals[0]
-            car["Repasse"] = vals[1]
-            if car["Repasse"] > 5000:
-                cars.append(car)
+        # Repasse/Custo - usa PREÇO CLIENTE (coluna 9)
+        preco_raw = (
+            precos_txt[i]
+            if i < len(precos_txt)
+            else (precos_txt[-1] if precos_txt else "")
+        )
+        preco_val = parse_money(preco_raw)
+
+        if fipe_val and preco_val and preco_val > 5000:
+            car["Fipe"] = fipe_val
+            car["Repasse"] = preco_val
+            cars.append(car)
 
     return cars
 
