@@ -64,10 +64,10 @@ def clean_model(text):
 
 def extract_cars_from_row(row):
     """
-    Extrai carros da linha usando layout de 16 colunas:
-    0: Placa (pode estar vazio), 1: LOJA, 2: MODELO, 3: ANO FAB, 4: ANO MOD,
-    5: KM, 6: COR, 7: FIPE, 8: MARGEM, 9: PREÇO CLIENTE (Custo),
-    10: Orçamento (alternativo)
+    Extrai carros da linha usando layout de 16 colunas ALPHAVILLE:
+    0: PLACA, 1: LOJA, 2: MODELO, 3: ANO FAB, 4: ANO MOD, 5: KM, 6: COR,
+    7: FIPE, 8: MARGEM (R$), 9: PREÇO CLIENTE (=Custo), 10: ORÇAMENTO,
+    11: ENDEREÇO, 12: BAIRRO, 13: CIDADE, 14: ESTADO, 15: LAUDO
     """
     extracted = []
 
