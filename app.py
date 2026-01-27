@@ -172,7 +172,13 @@ def process(file, debug=False):
                         }
                     )
                 for row in table:
-                    if row and row[0] and "LOJA" not in str(row[0]):
+                    # Verifica se a linha tem dados válidos (MODELO na coluna 2)
+                    if (
+                        row
+                        and len(row) > 2
+                        and row[2]
+                        and "LOJA" not in str(row[0] or "")
+                    ):
                         data.extend(extract_cars(row))
     return data, debug_info if debug else (data, [])
 

@@ -154,8 +154,13 @@ def process_pdf(file):
             tables = page.extract_tables()
             for table in tables:
                 for row in table:
-                    # Pula cabeçalho ou linha vazia
-                    if not row or not row[0] or "LOJA" in str(row[0]):
+                    # Verifica se a linha tem dados válidos (MODELO na coluna 2)
+                    if (
+                        not row
+                        or len(row) < 3
+                        or not row[2]
+                        or "LOJA" in str(row[0] or "")
+                    ):
                         continue
 
                     # Processa a linha (pode gerar 1 ou + carros)
