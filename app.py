@@ -56,165 +56,83 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- MOTOR DE LEITURA BLINDADO (V3.2 - CLEAN & SHIELDED) ---
+# --- MOTOR DE LEITURA MATRIX (V4.0 - 15 COLUNAS) ---
 
 
 def parse_money(value_str):
-    if not value_str:
-        return None
-    clean = re.sub(r"[^\d,]", "", str(value_str))
+    if not value_str or pd.isna(value_str):
+        return 0.0
+    clean = re.sub(r"[^\d,]", "", str(value_str).replace(" ", ""))
     if not clean:
-        return None
+        return 0.0
     try:
         if "," in clean:
             val = float(clean.replace(".", "").replace(",", "."))
         else:
-            val = float(clean.replace(".", ""))
-        return val if val > 2000 else None
+            val = float(clean)
+        return val
     except:
-        return None
+        return 0.0
 
 
-def clean_info_v32(text):
-    text = str(text).upper().replace("\n", " ")
-
-    # 1. Detecta Marca e Cor
-    marca_det = "OUTROS"
-    for m in MARCAS:
-        if m in text:
-            marca_det = m
-            break
-
-    cor_det = "OUTROS"
-    for c in CORES:
-        if c in text:
-            cor_det = c
-            break
-
-    # 2. Detecta Ano
-    anos = re.findall(r"\b(20[1-2][0-9])\b", text)
-    ano_mod = int(anos[1]) if len(anos) >= 2 else (int(anos[0]) if anos else 0)
-
-    # 3. Limpeza de Modelo (Blocklist Pesada)
-    clean = re.sub(r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b", "", text)
-    clean = re.sub(r"R\$\s?[\d\.,]+", "", clean)
-    clean = re.sub(r"\b20[1-2][0-9]\b", "", clean)
-
-    blocklist = (
-        [
-            "OFERTA",
-            "DISPONIVEL",
-            "VCPBR",
-            "VCPER",
-            "APROVADO",
-            "BARUERI",
-            "ALPHAVILLE",
-            "SP",
-            "KM",
-            "FIPE",
-            "ORCAMENTO",
-            "ALAMEDA",
-            "RUA",
-            "AVENIDA",
-            "VIA",
-            "CENTRO",
-            "MARGEM",
-            "RIO",
-            "NEGRO",
-            "ARAGUAIA",
-            "MAMORE",
-            "BRASIL",
-            "PARNAIBA",
-            "TAMBORE",
-            "INDUSTRIAL",
-            "JARDIM",
-            "VILA",
-            "CEP",
-            "CIDADE",
-        ]
-        + MARCAS
-        + CORES
-    )
-
-    words = clean.split()
-    final_words = [
-        w for w in words if w not in blocklist and len(w) > 2 and not w.isdigit()
-    ]
-
-    modelo = " ".join(final_words[:6])
-    if marca_det != "OUTROS":
-        modelo = f"{marca_det} {modelo}"
-
-    return marca_det, modelo, cor_det, ano_mod
+def clean_text(text):
+    if not text or pd.isna(text):
+        return ""
+    return str(text).upper().strip().replace("\n", " ")
 
 
-def process_pdf_v32(file):
+def process_pdf_v4(file):
     data = []
     with pdfplumber.open(file) as pdf:
-        full_text = ""
         for page in pdf.pages:
-            full_text += page.extract_text() + "\n"
+            tables = page.extract_tables()
+            for table in tables:
+                for row in table:
+                    if not row or len(row) < 10:
+                        continue
 
-    if not full_text:
-        return []
+                    placa = clean_text(row[0])
+                    if placa == "PLACA" or not placa or len(placa) < 7:
+                        continue
 
-    plate_pattern = r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b"
-    plates_found = list(re.finditer(plate_pattern, full_text))
-    processed_plates = set()
+                    # Mapping v4.0 Matrix:
+                    # 0: Placa, 2: Modelo, 3: Ano Fab, 4: Ano Mod, 5: KM, 6: Cor, 7: Fipe, 9: Repasse
+                    modelo = clean_text(row[2])
+                    ano_fab = clean_text(row[3])
+                    ano_mod = (
+                        int(clean_text(row[4])) if clean_text(row[4]).isdigit() else 0
+                    )
+                    km_raw = clean_text(row[5])
+                    cor = clean_text(row[6])
+                    fipe = parse_money(row[7])
+                    repasse = parse_money(row[9])
 
-    for match in plates_found:
-        placa = match.group()
-        if placa in processed_plates:
-            continue
+                    # KM Clean
+                    try:
+                        km = int(re.sub(r"\D", "", km_raw))
+                    except:
+                        km = 0
 
-        start = match.start()
-        end = match.end()
+                    # Extrai Marca para filtros
+                    marca_det = "OUTROS"
+                    for m in MARCAS:
+                        if m in modelo:
+                            marca_det = m
+                            break
 
-        # Contexto bidirecional
-        ctx_start = max(0, start - 150)
-        ctx_end = min(len(full_text), end + 300)
-        ctx = full_text[ctx_start:ctx_end]
-
-        # Extrai Dinheiro
-        prices_raw = re.findall(
-            r"R\$\s?[\d\.,]+|(?<=\s)[\d\.]{5,8},[\d]{2}(?=\s|$)|\b\d{2}\.\d{3}\b", ctx
-        )
-        prices = []
-        for p in prices_raw:
-            val = parse_money(p)
-            if val and val > 10000:
-                prices.append(val)
-
-        prices = sorted(list(set(prices)), reverse=True)
-
-        if len(prices) >= 2:
-            fipe = prices[0]
-            repasse = prices[1]
-
-            marca, modelo, cor, ano = clean_info_v32(ctx)
-
-            # KM
-            km = 0
-            km_matches = re.findall(r"\b\d{1,3}\.?\d{3}\b", ctx)
-            for km_cand in km_matches:
-                k_val = int(str(km_cand).replace(".", ""))
-                if 1000 < k_val < 300000:
-                    km = k_val
-                    break
-
-            data.append(
-                {
-                    "Marca": marca,
-                    "Modelo": modelo,
-                    "Cor": cor,
-                    "Ano": ano,
-                    "Placa": placa,
-                    "KM": km,
-                    "Fipe": fipe,
-                    "Repasse": repasse,
-                }
-            )
-            processed_plates.add(placa)
+                    if fipe > 0 and repasse > 0:
+                        data.append(
+                            {
+                                "Marca": marca_det,
+                                "Modelo": modelo,
+                                "Ano": ano_mod,
+                                "Cor": cor,
+                                "Placa": placa,
+                                "KM": km,
+                                "Fipe": fipe,
+                                "Repasse": repasse,
+                            }
+                        )
     return data
 
 
@@ -226,13 +144,13 @@ max_val = st.sidebar.number_input("💰 Máx. Investimento (R$):", step=5000)
 txt_busca = st.sidebar.text_input("🔍 Buscar Modelo (ex: Corolla):")
 
 st.title("🎯 FipeHunter Pro")
-st.caption("Motor Clean & Shielded v3.2")
+st.caption("Motor Matrix v4.0 (15 Colunas)")
 
 uploaded = st.file_uploader("Arraste o PDF Alphaville aqui", type="pdf")
 
 if uploaded:
-    with st.spinner("Refinando Garimpo v3.2..."):
-        raw = process_pdf_v32(uploaded)
+    with st.spinner("Decodificando Colunas Matrix..."):
+        raw = process_pdf_v4(uploaded)
         df = pd.DataFrame(raw)
 
         if not df.empty:
@@ -260,7 +178,7 @@ if uploaded:
             df_final = pd.DataFrame(final).sort_values(by="Lucro", ascending=False)
 
             if not df_final.empty:
-                st.success(f"{len(df_final)} oportunidades encontradas!")
+                st.success(f"{len(df_final)} veículos encontrados!")
 
                 # Top 10 Oportunidades
                 st.subheader("🔥 Top 10 Melhores Oportunidades")
@@ -272,7 +190,7 @@ if uploaded:
                             r = df_final.iloc[idx]
                             with cols[j]:
                                 st.metric(
-                                    label=f"{r['Modelo']}",
+                                    label=f"{r['Modelo'][:25]}...",
                                     value=f"R$ {r['Lucro']:,.0f}",
                                     delta=f"{r['Margem']:.1f}%",
                                 )
@@ -308,19 +226,19 @@ if uploaded:
                     df_final.to_excel(writer, index=False, sheet_name="Oportunidades")
 
                 c_ex1.download_button(
-                    "📥 Exportar Excel", output.getvalue(), "fipehunter_v3_2.xlsx"
+                    "📥 Exportar Excel", output.getvalue(), "fipehunter_matrix_v4.xlsx"
                 )
                 c_ex2.download_button(
                     "📄 Exportar CSV",
                     df_final.to_csv(index=False).encode("utf-8"),
-                    "fipehunter_v3_2.csv",
+                    "fipehunter_matrix_v4.csv",
                 )
 
             else:
                 st.warning("Nenhum carro passou nos filtros.")
         else:
             st.error(
-                "Nenhum veículo detectado. O PDF pode ter um novo formato ou as regras de limpeza são muito restritas."
+                "Nenhum veículo detectado. Verifique se o PDF segue o padrão de 15 colunas."
             )
 else:
     st.info("👈 Configure os filtros e suba o PDF Alphaville.")
