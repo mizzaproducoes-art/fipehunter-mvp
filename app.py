@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import pdfplumber
+import io
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="FipeHunter Pro", layout="wide", page_icon="🎯")
@@ -10,16 +11,38 @@ st.markdown(
     <style>
         #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
         div[data-testid="stMetric"] { background-color: #1E1E1E; border: 1px solid #333; padding: 15px; border-radius: 10px; color: white; }
+        div.stDownloadButton > button { width: 100%; background-color: #00C853; color: white; font-weight: bold; padding: 15px; border-radius: 8px; }
     </style>
 """,
     unsafe_allow_html=True,
 )
+
+# --- FILTROS PRÉ-CARREGADOS ---
+MARCAS = [
+    "CHEVROLET",
+    "VOLKSWAGEN",
+    "FIAT",
+    "TOYOTA",
+    "HONDA",
+    "HYUNDAI",
+    "JEEP",
+    "RENAULT",
+    "NISSAN",
+    "PEUGEOT",
+    "CITROEN",
+    "FORD",
+    "MITSUBISHI",
+    "BMW",
+]
+CORES = ["BRANCO", "PRETO", "PRATA", "CINZA", "VERMELHO", "AZUL", "BEGE", "VERDE"]
+ANOS = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018]
 
 
 # --- LOGIN ---
 def check_password():
     if st.session_state.get("auth", False):
         return True
+    st.markdown("### 🔒 Acesso Restrito - FipeHunter")
     pwd = st.text_input("Senha de Acesso", type="password")
     if st.button("Entrar"):
         if pwd == "FIPE2026":
@@ -33,8 +56,9 @@ def check_password():
 if not check_password():
     st.stop()
 
+# --- MOTOR DE LEITURA BLINDADO (V3.0 - BIDIRECIONAL) ---
 
-# --- MOTOR DE LEITURA (V3.0 - IGUAL AO ADMIN) ---
+
 def parse_money(value_str):
     if not value_str:
         return None
@@ -42,178 +66,229 @@ def parse_money(value_str):
     if not clean:
         return None
     try:
-        val = (
-            float(clean.replace(".", "").replace(",", "."))
-            if "," in clean
-            else float(clean.replace(".", ""))
-        )
+        if "," in clean:
+            val = float(clean.replace(".", "").replace(",", "."))
+        else:
+            val = float(clean.replace(".", ""))
         return val if val > 2000 else None
     except:
         return None
 
 
-def clean_model(text):
+def clean_info_v3(text):
     text = str(text).upper().replace("\n", " ")
-    remove = [
-        "VCPBR",
-        "VCPER",
-        "OFERTA",
-        "DISPONIVEL",
-        "FLEX",
-        "GASOLINA",
-        "ALCOOL",
-        "AUTOMATICO",
-        "MANUAL",
-        "C/AR",
-        "4P",
-        "2P",
-    ]
-    clean = re.sub(r"R\$\s?[\d\.,]+", "", text)
-    words = clean.split()
-    final = [w for w in words if w not in remove and len(w) > 2 and not w.isdigit()]
-    return " ".join(final[:6])
-
-
-def extract_cars_alphaville(row):
-    extracted = []
-    raw_placas = str(row[0])
-    placas = re.findall(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", raw_placas)
-
-    if not placas:
-        return []
-
-    idx_price = -1
-    for i, col in enumerate(row):
-        if col and "R$" in str(col):
-            idx_price = i
+    # Extrai Marca
+    marca = "OUTROS"
+    for m in MARCAS:
+        if m in text:
+            marca = m
+            break
+    # Extrai Cor
+    cor = "OUTROS"
+    for c in CORES:
+        if c in text:
+            cor = c
             break
 
-    if idx_price == -1:
-        return []
+    # Extrai Ano
+    anos = re.findall(r"\b(20[1-2][0-9])\b", text)
+    ano_fab = anos[0] if len(anos) > 0 else "0"
+    ano_mod = int(anos[1]) if len(anos) >= 2 else (int(anos[0]) if anos else 0)
 
-    raw_prices = str(row[idx_price])
-    raw_models = str(row[1]) if len(row) > 1 else ""
+    # Limpa Modelo
+    clean = re.sub(r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b", "", text)
+    clean = re.sub(r"R\$\s?[\d\.,]+", "", clean)
+    clean = re.sub(r"\b20[1-2][0-9]\b", "", clean)
+    words = clean.split()
+    ignore = (
+        [
+            "OFERTA",
+            "DISPONIVEL",
+            "VCPBR",
+            "VCPER",
+            "APROVADO",
+            "BARUERI",
+            "ALPHAVILLE",
+            "SP",
+            "KM",
+            "FIPE",
+            "ORCAMENTO",
+        ]
+        + MARCAS
+        + CORES
+    )
+    modelo = " ".join(
+        [w for w in words if w not in ignore and len(w) > 2 and not w.isdigit()][:6]
+    )
 
-    price_chunks = [x for x in re.split(r"\n+", raw_prices) if len(x) > 5]
-    model_chunks = [x for x in re.split(r"\n+", raw_models) if len(x) > 3]
-
-    for i, placa in enumerate(placas):
-        car = {"Placa": placa}
-
-        try:
-            raw_m = model_chunks[i] if i < len(model_chunks) else model_chunks[-1]
-        except:
-            raw_m = "Modelo N/D"
-        car["Modelo"] = clean_model(raw_m)
-
-        # Extrai Marca do Modelo
-        car["Marca"] = "OUTROS"
-        for m in [
-            "CHEVROLET",
-            "VOLKSWAGEN",
-            "FIAT",
-            "TOYOTA",
-            "HONDA",
-            "HYUNDAI",
-            "JEEP",
-            "RENAULT",
-            "NISSAN",
-            "FORD",
-        ]:
-            if m in car["Modelo"]:
-                car["Marca"] = m
-                break
-
-        search_text = price_chunks[i] if i < len(price_chunks) else raw_prices
-        vals = sorted(
-            [
-                parse_money(m)
-                for m in re.findall(r"R\$\s?[\d\.,]+", search_text)
-                if parse_money(m)
-            ],
-            reverse=True,
-        )
-
-        if len(vals) >= 2:
-            car["Fipe"] = vals[0]
-            car["Repasse"] = vals[1]
-            if car["Repasse"] > 5000:
-                extracted.append(car)
-    return extracted
+    return marca, modelo, cor, ano_mod
 
 
-def process_pdf(file):
+def process_pdf_v3(file):
     data = []
     with pdfplumber.open(file) as pdf:
+        full_text = ""
         for page in pdf.pages:
-            tables = page.extract_tables()
-            for table in tables:
-                for row in table:
-                    if row and row[0] and "LOJA" not in str(row[0]):
-                        data.extend(extract_cars_alphaville(row))
+            full_text += page.extract_text() + "\n"
+
+    if not full_text:
+        return []
+
+    plate_pattern = r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b"
+    plates_found = list(re.finditer(plate_pattern, full_text))
+
+    for match in plates_found:
+        placa = match.group()
+        start = match.start()
+        end = match.end()
+
+        # Contexto 250 antes, 500 depois
+        ctx_start = max(0, start - 250)
+        ctx_end = min(len(full_text), end + 500)
+        ctx = full_text[ctx_start:ctx_end]
+
+        # Extrai Dinheiro
+        prices_raw = re.findall(
+            r"R\$\s?[\d\.,]+|(?<=\s)[\d\.]{5,8},[\d]{2}(?=\s|$)|\b\d{2}\.\d{3}\b", ctx
+        )
+        prices = []
+        for p in prices_raw:
+            val = parse_money(p)
+            if val and val > 10000:
+                prices.append(val)
+
+        prices = sorted(list(set(prices)), reverse=True)
+
+        if len(prices) >= 2:
+            fipe = prices[0]
+            repasse = prices[1]
+
+            marca, modelo, cor, ano = clean_info_v3(ctx)
+
+            # KM
+            km = 0
+            km_matches = re.findall(r"\b\d{1,3}\.?\d{3}\b", ctx)
+            for km_cand in km_matches:
+                k_val = int(str(km_cand).replace(".", ""))
+                if 1000 < k_val < 300000:
+                    km = k_val
+                    break
+
+            data.append(
+                {
+                    "Marca": marca,
+                    "Modelo": modelo,
+                    "Cor": cor,
+                    "Ano": ano,
+                    "Placa": placa,
+                    "KM": km,
+                    "Fipe": fipe,
+                    "Repasse": repasse,
+                }
+            )
     return data
 
 
-# --- APP ---
-st.sidebar.header("Filtros de Caça")
-f_marca = st.sidebar.multiselect(
-    "Montadoras",
-    [
-        "CHEVROLET",
-        "VOLKSWAGEN",
-        "FIAT",
-        "TOYOTA",
-        "HONDA",
-        "HYUNDAI",
-        "JEEP",
-        "RENAULT",
-        "NISSAN",
-        "FORD",
-    ],
-)
-f_invest = st.sidebar.number_input("Max Investimento (R$)", step=5000.0)
+# --- FRONTEND ---
+st.sidebar.header("🔍 Filtros de Caça")
+sel_marcas = st.sidebar.multiselect("Montadora:", MARCAS)
+sel_anos = st.sidebar.multiselect("Ano Modelo:", ANOS)
+max_val = st.sidebar.number_input("💰 Máx. Investimento (R$):", step=5000)
+txt_busca = st.sidebar.text_input("🔍 Buscar Modelo (ex: Corolla):")
 
 st.title("🎯 FipeHunter Pro")
+st.caption("Motor Blindado v3.0 (Bidirecional)")
 
-uploaded_file = st.file_uploader("Arraste o PDF aqui", type="pdf")
+uploaded = st.file_uploader("Arraste o PDF Alphaville aqui", type="pdf")
 
-if uploaded_file:
-    with st.spinner("Analisando Oportunidades..."):
-        raw_data = process_pdf(uploaded_file)
-        df = pd.DataFrame(raw_data)
+if uploaded:
+    with st.spinner("Analisando Oportunidades com Motor v3.0..."):
+        raw = process_pdf_v3(uploaded)
+        df = pd.DataFrame(raw)
 
         if not df.empty:
-            df["Lucro"] = df["Fipe"] - df["Repasse"]
-            df["Margem"] = (df["Lucro"] / df["Fipe"]) * 100
+            final = []
+            for _, r in df.iterrows():
+                lucro = r["Fipe"] - r["Repasse"]
+                margem = (lucro / r["Fipe"] * 100) if r["Fipe"] > 0 else 0
 
-            # Filtros
-            if f_marca:
-                df = df[df["Marca"].isin(f_marca)]
-            if f_invest > 0:
-                df = df[df["Repasse"] <= f_invest]
+                # Filtros
+                ok = True
+                if sel_marcas and r["Marca"] not in sel_marcas:
+                    ok = False
+                if sel_anos and r["Ano"] not in sel_anos:
+                    ok = False
+                if max_val > 0 and r["Repasse"] > max_val:
+                    ok = False
+                if txt_busca and txt_busca.upper() not in r["Modelo"].upper():
+                    ok = False
 
-            # Ordena por Lucro
-            df = df.sort_values(by="Lucro", ascending=False)
+                if ok and lucro > 0:
+                    r["Lucro"] = lucro
+                    r["Margem"] = margem
+                    final.append(r)
 
-            st.success(f"{len(df)} Oportunidades Encontradas!")
+            df_final = pd.DataFrame(final).sort_values(by="Lucro", ascending=False)
 
-            # Top 3
-            cols = st.columns(3)
-            for i in range(min(3, len(df))):
-                row = df.iloc[i]
-                cols[i].metric(
-                    label=row["Modelo"],
-                    value=f"Lucro: R$ {row['Lucro']:,.0f}",
-                    delta=f"{row['Margem']:.1f}%",
+            if not df_final.empty:
+                st.success(f"{len(df_final)} oportunidades encontradas!")
+
+                # Top 3
+                st.subheader("🔥 Top Oportunidades")
+                cols = st.columns(3)
+                for i in range(min(3, len(df_final))):
+                    r = df_final.iloc[i]
+                    cols[i].metric(
+                        f"{r['Marca']} {r['Modelo']}",
+                        f"Lucro: R$ {r['Lucro']:,.0f}",
+                        f"{r['Margem']:.1f}%",
+                    )
+                    cols[i].markdown(
+                        f"**Paga:** R$ {r['Repasse']:,.0f} | **Fipe:** R$ {r['Fipe']:,.0f}"
+                    )
+                    cols[i].caption(
+                        f"{r['Cor']} | {r['Ano']} | {r['Placa']} | {r['KM']}km"
+                    )
+
+                # Tabela
+                st.divider()
+                st.dataframe(
+                    df_final[
+                        [
+                            "Marca",
+                            "Modelo",
+                            "Ano",
+                            "Cor",
+                            "Repasse",
+                            "Fipe",
+                            "Lucro",
+                            "Margem",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
                 )
-                cols[i].markdown(f"**Paga:** R$ {row['Repasse']:,.0f}")
-                cols[i].markdown(f"Fipe: R$ {row['Fipe']:,.0f}")
 
-            st.divider()
-            st.dataframe(
-                df[["Marca", "Modelo", "Repasse", "Fipe", "Lucro", "Margem"]],
-                use_container_width=True,
-            )
+                # Exportação
+                st.divider()
+                c_ex1, c_ex2 = st.columns(2)
 
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                    df_final.to_excel(writer, index=False, sheet_name="Oportunidades")
+
+                c_ex1.download_button(
+                    "📥 Exportar Excel", output.getvalue(), "fipehunter_v3.xlsx"
+                )
+                c_ex2.download_button(
+                    "📄 Exportar CSV",
+                    df_final.to_csv(index=False).encode("utf-8"),
+                    "fipehunter_v3.csv",
+                )
+
+            else:
+                st.warning("Nenhum carro passou nos filtros.")
         else:
-            st.warning("Nenhum carro encontrado. Verifique se o PDF está correto.")
+            st.error("Nenhum veículo detectado. Verifique o layout do PDF.")
+else:
+    st.info("👈 Configure os filtros e suba o PDF Alphaville.")
