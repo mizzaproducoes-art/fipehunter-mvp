@@ -233,22 +233,25 @@ if uploaded:
             if not df_final.empty:
                 st.success(f"{len(df_final)} oportunidades encontradas!")
 
-                # Top 3
-                st.subheader("🔥 Top Oportunidades")
-                cols = st.columns(3)
-                for i in range(min(3, len(df_final))):
-                    r = df_final.iloc[i]
-                    cols[i].metric(
-                        f"{r['Marca']} {r['Modelo']}",
-                        f"Lucro: R$ {r['Lucro']:,.0f}",
-                        f"{r['Margem']:.1f}%",
-                    )
-                    cols[i].markdown(
-                        f"**Paga:** R$ {r['Repasse']:,.0f} | **Fipe:** R$ {r['Fipe']:,.0f}"
-                    )
-                    cols[i].caption(
-                        f"{r['Cor']} | {r['Ano']} | {r['Placa']} | {r['KM']}km"
-                    )
+                # Top 10 Oportunidades
+                st.subheader("🔥 Top 10 Melhores Oportunidades")
+
+                # Exibe até 10 carros em linhas de 5 colunas
+                for start_idx in range(0, 10, 5):
+                    cols = st.columns(5)
+                    for j in range(5):
+                        idx = start_idx + j
+                        if idx < len(df_final):
+                            r = df_final.iloc[idx]
+                            with cols[j]:
+                                st.metric(
+                                    label=f"{r['Marca']} {r['Modelo']}",
+                                    value=f"R$ {r['Lucro']:,.0f}",
+                                    delta=f"{r['Margem']:.1f}%",
+                                )
+                                st.caption(f"**Custo:** R$ {r['Repasse']:,.0f}")
+                                st.caption(f"{r['Ano']} | {r['Placa']}")
+                                st.divider()
 
                 # Tabela
                 st.divider()
