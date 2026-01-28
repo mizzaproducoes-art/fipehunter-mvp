@@ -56,7 +56,7 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- MOTOR DE LEITURA BLINDADO (V3.0 - BIDIRECIONAL) ---
+# --- MOTOR DE LEITURA BLINDADO (V3.2 - CLEAN & SHIELDED) ---
 
 
 def parse_money(value_str):
@@ -75,32 +75,32 @@ def parse_money(value_str):
         return None
 
 
-def clean_info_v3(text):
+def clean_info_v32(text):
     text = str(text).upper().replace("\n", " ")
-    # Extrai Marca
-    marca = "OUTROS"
+
+    # 1. Detecta Marca e Cor
+    marca_det = "OUTROS"
     for m in MARCAS:
         if m in text:
-            marca = m
+            marca_det = m
             break
-    # Extrai Cor
-    cor = "OUTROS"
+
+    cor_det = "OUTROS"
     for c in CORES:
         if c in text:
-            cor = c
+            cor_det = c
             break
 
-    # Extrai Ano
+    # 2. Detecta Ano
     anos = re.findall(r"\b(20[1-2][0-9])\b", text)
-    ano_fab = anos[0] if len(anos) > 0 else "0"
     ano_mod = int(anos[1]) if len(anos) >= 2 else (int(anos[0]) if anos else 0)
 
-    # Limpa Modelo
+    # 3. Limpeza de Modelo (Blocklist Pesada)
     clean = re.sub(r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b", "", text)
     clean = re.sub(r"R\$\s?[\d\.,]+", "", clean)
     clean = re.sub(r"\b20[1-2][0-9]\b", "", clean)
-    words = clean.split()
-    ignore = (
+
+    blocklist = (
         [
             "OFERTA",
             "DISPONIVEL",
@@ -113,18 +113,42 @@ def clean_info_v3(text):
             "KM",
             "FIPE",
             "ORCAMENTO",
+            "ALAMEDA",
+            "RUA",
+            "AVENIDA",
+            "VIA",
+            "CENTRO",
+            "MARGEM",
+            "RIO",
+            "NEGRO",
+            "ARAGUAIA",
+            "MAMORE",
+            "BRASIL",
+            "PARNAIBA",
+            "TAMBORE",
+            "INDUSTRIAL",
+            "JARDIM",
+            "VILA",
+            "CEP",
+            "CIDADE",
         ]
         + MARCAS
         + CORES
     )
-    modelo = " ".join(
-        [w for w in words if w not in ignore and len(w) > 2 and not w.isdigit()][:6]
-    )
 
-    return marca, modelo, cor, ano_mod
+    words = clean.split()
+    final_words = [
+        w for w in words if w not in blocklist and len(w) > 2 and not w.isdigit()
+    ]
+
+    modelo = " ".join(final_words[:6])
+    if marca_det != "OUTROS":
+        modelo = f"{marca_det} {modelo}"
+
+    return marca_det, modelo, cor_det, ano_mod
 
 
-def process_pdf_v3(file):
+def process_pdf_v32(file):
     data = []
     with pdfplumber.open(file) as pdf:
         full_text = ""
@@ -136,15 +160,19 @@ def process_pdf_v3(file):
 
     plate_pattern = r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b"
     plates_found = list(re.finditer(plate_pattern, full_text))
+    processed_plates = set()
 
     for match in plates_found:
         placa = match.group()
+        if placa in processed_plates:
+            continue
+
         start = match.start()
         end = match.end()
 
-        # Contexto 250 antes, 500 depois
-        ctx_start = max(0, start - 250)
-        ctx_end = min(len(full_text), end + 500)
+        # Contexto bidirecional
+        ctx_start = max(0, start - 150)
+        ctx_end = min(len(full_text), end + 300)
         ctx = full_text[ctx_start:ctx_end]
 
         # Extrai Dinheiro
@@ -163,7 +191,7 @@ def process_pdf_v3(file):
             fipe = prices[0]
             repasse = prices[1]
 
-            marca, modelo, cor, ano = clean_info_v3(ctx)
+            marca, modelo, cor, ano = clean_info_v32(ctx)
 
             # KM
             km = 0
@@ -186,6 +214,7 @@ def process_pdf_v3(file):
                     "Repasse": repasse,
                 }
             )
+            processed_plates.add(placa)
     return data
 
 
@@ -197,13 +226,13 @@ max_val = st.sidebar.number_input("💰 Máx. Investimento (R$):", step=5000)
 txt_busca = st.sidebar.text_input("🔍 Buscar Modelo (ex: Corolla):")
 
 st.title("🎯 FipeHunter Pro")
-st.caption("Motor Blindado v3.0 (Bidirecional)")
+st.caption("Motor Clean & Shielded v3.2")
 
 uploaded = st.file_uploader("Arraste o PDF Alphaville aqui", type="pdf")
 
 if uploaded:
-    with st.spinner("Analisando Oportunidades com Motor v3.0..."):
-        raw = process_pdf_v3(uploaded)
+    with st.spinner("Refinando Garimpo v3.2..."):
+        raw = process_pdf_v32(uploaded)
         df = pd.DataFrame(raw)
 
         if not df.empty:
@@ -235,8 +264,6 @@ if uploaded:
 
                 # Top 10 Oportunidades
                 st.subheader("🔥 Top 10 Melhores Oportunidades")
-
-                # Exibe até 10 carros em linhas de 5 colunas
                 for start_idx in range(0, 10, 5):
                     cols = st.columns(5)
                     for j in range(5):
@@ -245,7 +272,7 @@ if uploaded:
                             r = df_final.iloc[idx]
                             with cols[j]:
                                 st.metric(
-                                    label=f"{r['Marca']} {r['Modelo']}",
+                                    label=f"{r['Modelo']}",
                                     value=f"R$ {r['Lucro']:,.0f}",
                                     delta=f"{r['Margem']:.1f}%",
                                 )
@@ -281,17 +308,19 @@ if uploaded:
                     df_final.to_excel(writer, index=False, sheet_name="Oportunidades")
 
                 c_ex1.download_button(
-                    "📥 Exportar Excel", output.getvalue(), "fipehunter_v3.xlsx"
+                    "📥 Exportar Excel", output.getvalue(), "fipehunter_v3_2.xlsx"
                 )
                 c_ex2.download_button(
                     "📄 Exportar CSV",
                     df_final.to_csv(index=False).encode("utf-8"),
-                    "fipehunter_v3.csv",
+                    "fipehunter_v3_2.csv",
                 )
 
             else:
                 st.warning("Nenhum carro passou nos filtros.")
         else:
-            st.error("Nenhum veículo detectado. Verifique o layout do PDF.")
+            st.error(
+                "Nenhum veículo detectado. O PDF pode ter um novo formato ou as regras de limpeza são muito restritas."
+            )
 else:
     st.info("👈 Configure os filtros e suba o PDF Alphaville.")

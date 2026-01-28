@@ -26,34 +26,37 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# --- MOTOR DE LEITURA BLINDADO (V3.0 - BIDIRECIONAL) ---
+# --- MOTOR DE LEITURA BLINDADO (V3.2 - CLEAN & SHIELDED) ---
 
 
 def parse_money(value_str):
     if not value_str:
         return None
-    # Remove R$, whitespace, etc.
     clean = re.sub(r"[^\d,]", "", str(value_str))
     if not clean:
         return None
     try:
-        # Tenta formato BRL (123.456,78 ou 123456,78)
         if "," in clean:
             val = float(clean.replace(".", "").replace(",", "."))
         else:
             val = float(clean.replace(".", ""))
-        return val if val > 2000 else None  # Filtra ruído
+        return val if val > 2000 else None
     except:
         return None
 
 
-def clean_model_v3(text):
+def clean_model_v32(text):
     text = str(text).upper().replace("\n", " ")
-    # Regex para remover placas e preços
-    text = re.sub(r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b", "", text)
-    text = re.sub(r"R\$\s?[\d\.,]+", "", text)
 
-    stopwords = [
+    # 1. Remove Placas
+    text = re.sub(r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b", "", text)
+
+    # 2. Remove Preços (R$ ou formato numérico de preço)
+    text = re.sub(r"R\$\s?[\d\.,]+", "", text)
+    text = re.sub(r"\b\d{2}\.\d{3},\d{2}\b", "", text)
+
+    # 3. Lista de Bloqueio Pesada (Endereços e Metadados)
+    blocklist = [
         "OFERTA",
         "DISPONIVEL",
         "VCPBR",
@@ -70,13 +73,111 @@ def clean_model_v3(text):
         "KM",
         "PRECO",
         "ESTOQUE",
+        "ALAMEDA",
+        "RUA",
+        "AVENIDA",
+        "VIA",
+        "CENTRO",
+        "MARGEM",
+        "LUCRO",
+        "RIO",
+        "NEGRO",
+        "ARAGUAIA",
+        "MAMORE",
+        "AMERICA",
+        "BRASIL",
+        "SANTANA",
+        "PARNAIBA",
+        "TAMBORE",
+        "INDUSTRIAL",
+        "JARDIM",
+        "VILA",
+        "EDIFICIO",
+        "ANDAR",
+        "SALA",
+        "LOJA",
+        "BLOCO",
+        "NUMERO",
+        "CEP",
+        "BAIRRO",
+        "CIDADE",
+        "ESTADO",
+        "FIXO",
+        "MOVEL",
+        "TEL",
+        "PHONE",
+        "COM",
+        "BRANCO",
+        "PRETO",
+        "PRATA",
+        "CINZA",
+        "VERMELHO",
+        "AZUL",
+        "BEGE",
+        "VERDE",
+        "AMARELO",
+        "OUTROS",
     ]
+
+    # Marcadores de marca para priorizar
+    marcas = [
+        "CHEVROLET",
+        "VOLKSWAGEN",
+        "FIAT",
+        "TOYOTA",
+        "HONDA",
+        "HYUNDAI",
+        "JEEP",
+        "RENAULT",
+        "NISSAN",
+        "FORD",
+        "MITSUBISHI",
+        "BMW",
+        "MERCEDES",
+        "AUDI",
+        "CITROEN",
+        "PEUGEOT",
+    ]
+
     words = text.split()
-    clean = [w for w in words if w not in stopwords and len(w) > 2 and not w.isdigit()]
-    return " ".join(clean[:7])
+
+    # Tenta identificar a marca primeiro
+    marca_detectada = ""
+    for w in words:
+        if w in marcas:
+            marca_detectada = w
+            break
+
+    # Filtra palavras inúteis
+    clean_words = []
+    for w in words:
+        # Se for a marca e já detectamos, mantém
+        if w == marca_detectada:
+            if w not in clean_words:
+                clean_words.append(w)
+            continue
+
+        # Filtra se estiver na blocklist ou for muito curta/vazia ou for número puro
+        if w in blocklist or len(w) <= 2 or w.isdigit():
+            continue
+
+        # Filtra se contiver símbolos de endereço
+        if any(char in w for char in ["/", "-", ",", "."]):
+            continue
+
+        clean_words.append(w)
+
+    # Se detectou a marca, garante que ela esteja no início
+    if marca_detectada and marca_detectada in clean_words:
+        clean_words.remove(marca_detectada)
+        final_list = [marca_detectada] + clean_words
+    else:
+        final_list = clean_words
+
+    return " ".join(final_list[:6])
 
 
-def process_pdf_v3(file):
+def process_pdf_v32(file):
     data_found = []
     with pdfplumber.open(file) as pdf:
         full_text = ""
@@ -88,42 +189,42 @@ def process_pdf_v3(file):
     if not full_text:
         return []
 
-    # Localiza todas as placas
     plate_pattern = r"\b[A-Z]{3}[0-9][A-Z0-9][0-9]{2}\b"
     plates_found = list(re.finditer(plate_pattern, full_text))
 
-    for i, match in enumerate(plates_found):
+    processed_plates = set()
+
+    for match in plates_found:
         placa = match.group()
+        if placa in processed_plates:
+            continue
+
         start_idx = match.start()
         end_idx = match.end()
 
-        # Pega contexto bidirecional (250 chars antes, 500 depois)
-        context_start = max(0, start_idx - 250)
-        context_end = min(len(full_text), end_idx + 500)
+        # Contexto bidirecional reduzido para mais precisão (150 antes, 300 depois)
+        context_start = max(0, start_idx - 150)
+        context_end = min(len(full_text), end_idx + 300)
         context = full_text[context_start:context_end]
 
-        # Extrai todos os preços no contexto
-        # Aceita "R$ 123.456" ou apenas "123.456" se estiver perto do contexto veicular
+        # Extrai preços
         prices_raw = re.findall(
             r"R\$\s?[\d\.,]+|(?<=\s)[\d\.]{5,8},[\d]{2}(?=\s|$)|\b\d{2}\.\d{3}\b",
             context,
         )
-
-        # Refina a limpeza dos preços
         prices = []
         for p in prices_raw:
             val = parse_money(p)
-            if val and val > 10000:  # Carros geralmente > 10k
+            if val and val > 10000:
                 prices.append(val)
 
         prices = sorted(list(set(prices)), reverse=True)
 
         if len(prices) >= 2:
-            # Lógica Alphaville 2026: Maior=Fipe, Segundo=Custo
             fipe = prices[0]
             custo = prices[1]
 
-            # Tenta pegar KM (número entre 1.000 e 300.000 perto da placa)
+            # KM
             km = 0
             km_matches = re.findall(r"\b\d{1,3}\.?\d{3}\b", context)
             for km_cand in km_matches:
@@ -132,9 +233,9 @@ def process_pdf_v3(file):
                     km = k_val
                     break
 
-            modelo = clean_model_v3(context)
+            modelo = clean_model_v32(context)
 
-            # Tenta extrair Ano (20XX)
+            # Ano
             ano_matches = re.findall(r"\b(20[1-2][0-9])\b", context)
             ano_fab = ano_matches[0] if len(ano_matches) > 0 else "N/D"
             ano_mod = ano_matches[1] if len(ano_matches) > 1 else ano_fab
@@ -149,25 +250,26 @@ def process_pdf_v3(file):
                     "Custo_Original": custo,
                 }
             )
+            processed_plates.add(placa)
 
     return data_found
 
 
 # --- FRONTEND B2B ---
 with st.sidebar:
-    st.title("🏢 R3R Admin v3.0")
+    st.title("🏢 R3R Admin v3.2")
     st.divider()
     st.header("Margem R3R")
     margem = st.number_input("Adicionar Valor Fixo (R$):", value=2000.0, step=100.0)
 
 st.title("Gerador de Listas R3R 🚀")
-st.caption("Motor Blindado v3.0 (Bidirecional)")
+st.caption("Motor Clean & Shielded v3.2")
 
 uploaded_file = st.file_uploader("📂 PDF da Fonte (Alphaville/Localiza)", type="pdf")
 
 if uploaded_file:
-    with st.spinner("Processando com Motor v3.0..."):
-        data = process_pdf_v3(uploaded_file)
+    with st.spinner("Refinando Extração de Dados..."):
+        data = process_pdf_v32(uploaded_file)
         if data:
             df = pd.DataFrame(data)
 
@@ -241,6 +343,4 @@ if uploaded_file:
                 "application/vnd.ms-excel",
             )
         else:
-            st.error(
-                "Nenhum veículo detectado. O layout do PDF pode ter mudado ou as placas não foram localizadas."
-            )
+            st.error("Nenhum veículo detectado com as regras de filtragem atuais.")
